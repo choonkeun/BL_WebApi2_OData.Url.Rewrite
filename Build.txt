@@ -1,0 +1,198 @@
+
+1. Create Project with WebApi2
+2. PM> Install-Package Microsoft.AspNet.OData -Version 5.7.0
+3. Create older "DataSource"
+    3.1. Create class "Customer.cs"
+        [Key]
+        using System.ComponentModel.DataAnnotations;
+    3.2. Create class "Employee.cs"
+    3.3. Create class "Order.cs"
+4. Copy NorthWnd1.MDF, Log to App_Data folder
+4. Copy NorthWnd2.MDF, Log to App_Data folder
+5. Modify web.config ConnectionString
+  <connectionStrings>
+    <add name="DBCS1" connectionString="data source=(LocalDB)\v11.0;AttachDbFilename=|DataDirectory|\NORTHWND1.MDF;Integrated Security=True;" providerName="System.Data.SqlClient" />
+    <add name="DBCS2" connectionString="data source=(LocalDB)\v11.0;AttachDbFilename=|DataDirectory|\NORTHWND2.MDF;Integrated Security=True;" providerName="System.Data.SqlClient" />
+    <add name="NORTHWNDEntities" connectionString="metadata=res://*/Database.NorthwindModel.csdl|res://*/Database.NorthwindModel.ssdl|res://*/Database.NorthwindModel.msl;provider=System.Data.SqlClient;provider connection string=&quot;data source=(LocalDB)\v11.0;attachdbfilename=|DataDirectory|\NORTHWND1.MDF;integrated security=True;MultipleActiveResultSets=True;App=EntityFramework&quot;" providerName="System.Data.EntityClient" />
+  </connectionStrings>
+6. Add Controller
+    "EmployeeController" - Web API 2 OData Controller with read/write actions
+7. Add App_Start/WebApiConfig.cs
+
+        using System.Web.Http;
+        using System.Web.OData.Extensions;
+        using System.Web.OData.Builder;
+        using BL_WebApi2_OData.Url.Rewrite.DataSource;
+        
+        public static void Register(HttpConfiguration config)
+        {
+            // Web API configuration and services
+
+            // Web API routes
+            config.MapHttpAttributeRoutes();
+
+            config.Routes.MapHttpRoute(
+                name: "DefaultApi",
+                routeTemplate: "api/{controller}/{id}",
+                defaults: new { id = RouteParameter.Optional }
+            );
+
+            config.MapODataServiceRoute("odata", "odata", model: GetModel());
+
+        }
+        public static Microsoft.OData.Edm.IEdmModel GetModel()
+        {
+            ODataModelBuilder builder = new System.Web.OData.Builder.ODataConventionModelBuilder();
+
+            builder.Namespace = "Northwind";
+            builder.ContainerName = "DefaultContainer";
+
+            builder.EntitySet<Customer>("Customer");
+            builder.EntitySet<Employee>("Employee");
+            builder.EntitySet<Order>("Order");
+
+            return builder.GetEdmModel();
+        }
+        
+8. PM> Install-Package EntityFramework -version 6.0.0
+  <configSections>
+    <section name="entityFramework" type="System.Data.Entity.Internal.ConfigFile.EntityFrameworkSection, EntityFramework, Version=6.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089" requirePermission="false" />
+  </configSections>
+
+  
+9. Add ADO.NET Entity Data Model 
+    - Name: NorthWindModel 
+    - NORTHWNDEntities
+    This will add ConnectionString at Web.Config 
+    - <add name="NORTHWNDEntities" 
+        connectionString="
+        metadata=res://*/DataSource.NorthWndModel.csdl|res://*/DataSource.NorthWndModel.ssdl|res://*/DataSource.NorthWndModel.msl
+        provider=System.Data.SqlClient;
+        provider connection string='data source=(LocalDB)\v11.0;
+        attachdbfilename=|DataDirectory|\NORTHWND.MDF;
+        integrated security=True;
+        MultipleActiveResultSets=True;
+        App=EntityFramework'
+        providerName="System.Data.EntityClient" />
+        
+10. Insert NORTHWNDEntities(string connectionString) into NorthWndModel.Context.cs under *.edmx
+
+    namespace BL_WebApi2_OData.Url.Rewrite.DataSource
+    {
+        using System;
+        using System.Data.Entity;
+        using System.Data.Entity.Infrastructure;
+        
+        public partial class NORTHWNDEntities : DbContext
+        {
+            public NORTHWNDEntities() : base("name=NORTHWNDEntities")
+            {
+            }
+
+            //*** Add this to get DatabaseName from URL
+            public NORTHWNDEntities(string connectionString) : base(connectionString)
+            {
+            }
+            protected override void OnModelCreating(DbModelBuilder modelBuilder)
+            {
+                throw new UnintentionalCodeFirstException();
+            }
+        
+            public virtual DbSet<Customer> Customers { get; set; }
+            public virtual DbSet<Employee> Employees { get; set; }
+            public virtual DbSet<Order> Orders { get; set; }
+        }
+    }
+
+11. Create DatabaseName.cs 
+
+    public class DatabaseName
+    {
+        public static string StoreName { get; private set; }
+
+        public static void SetDatabaseName(string storeName)
+        {
+            StoreName = storeName;
+        }
+
+        public static string GetDatabaseName()
+        {
+            return StoreName;
+        }
+
+        public static NORTHWNDEntities GetDbContext(string paraDbName)
+        {
+            var connectionStringTemplate =
+            @"metadata=res://*/DataSource.NorthWndModel.csdl|res://*/DataSource.NorthWndModel.ssdl|res://*/DataSource.NorthWndModel.msl;" +
+            @"provider=System.Data.SqlClient;" +
+            @"provider connection string='data source=(LocalDB)\v11.0;" +
+            @"attachdbfilename=|DataDirectory|\{0}.MDF;" +
+            @"integrated security=True;" +
+            @"MultipleActiveResultSets=True;" +
+            @"App=EntityFramework'";
+
+            var connectionString = string.Format(connectionStringTemplate, paraDbName);
+            var db = new NORTHWNDEntities(connectionString);
+            //db.Database.CreateIfNotExists();
+
+            return db;
+        }
+    }
+    
+12. Create EmployeeController and Insert 
+    12.1 Add Employee Controller with "Web API 2 OData Controller with acytions, using Entity Framework" 
+    12.2 Insert GetDbContext(databaseName)
+        //*** Insert
+            private NORTHWNDEntities db;
+            public EmployeeController() 
+            {
+                string databaseName = DatabaseName.GetDatabaseName();
+                db = DatabaseName.GetDbContext(databaseName);
+            }
+        //***
+    12.3 Change "SingleResult<Employee>" to "IHttpActionResult"
+         return Ok<IEnumerable<Employee>>(db.Employees);
+         
+        [Queryable]
+        public IHttpActionResult GetEmployee(ODataQueryOptions<Employee> queryOptions)
+        {
+            //List<Employee> employee = new List<Employee>();
+            //employee.AddRange(db.Employees.ToList());
+            //return Ok<IEnumerable<Employee>>(employee);
+            return Ok<IEnumerable<Employee>>(db.Employees);
+        }
+
+        // GET: odata/Employee(5)
+        [Queryable]
+        public IHttpActionResult GetEmployee([FromODataUri] int key, ODataQueryOptions<Employee> queryOptions)
+        {
+            return Ok(db.Employees.Where(employee => employee.EmployeeID == key));
+        }
+        
+    12.4
+        using System.Web.OData;             //v4
+        //using System.Web.Http.OData;      //v3 --> "406 Not Acceptable" error
+
+13. TEST
+
+    http://www.odata.org/getting-started/basic-tutorial/
+
+    GET http://localhost:1636/odata/$metadata
+
+    http://localhost:1636/NorthWnd2/odata/Employee
+
+    http://localhost:1636/NorthWnd2/odata/Employee(1)
+
+    http://localhost:1636/NorthWnd1/odata/Employee(2)?$select=EmployeeID,LastName
+
+    http://localhost:1636/NorthWnd1/odata/Employee?$select=EmployeeID&$expand=Orders($select=OrderID,CustomerID,OrderDate,ShipName) -- working
+
+    PATCH http://localhost:1636/odata/Employee(1)
+    content-type: application/json
+    {
+        "EmployeeID": 1,
+        "LastName": "Davolio",
+        "FirstName": "Nancy",
+        "Notes": "Patch test",
+        "ReportsTo": 2,
+    }
